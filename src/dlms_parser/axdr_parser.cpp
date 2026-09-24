@@ -469,14 +469,27 @@ bool AxdrParser::parse_flat_positional_(const DlmsDataType container_type, const
   // Whole-container matcher, like SelfDesc: only fires at element 0 of a STRUCTURE whose
   // element count matches this pattern's known field count exactly.
   if (container_type != DlmsDataType::STRUCTURE || elem_idx != 0) return false;
-  if (elem_count != pat.flat_obis_count) return false;
+  if (elem_count != pat.flat_field_count) return false;
+
+  std::array<AxdrCapture, AxdrDescriptorPattern::MAX_FLAT_FIELDS> caps;
 
   for (uint8_t i = 0; i < elem_count; i++) {
-    AxdrCapture cap{};
-    cap.elem_idx = static_cast<uint32_t>(this->pos_);
-    cap.obis = pat.flat_obis[i];
-    if (!this->capture_generic_value_(cap)) return false;
-    this->emit_object_(pat, cap);
+    const auto& field = pat.flat_fields[i];
+    caps[i].elem_idx = static_cast<uint32_t>(this->pos_);
+    caps[i].obis = field.obis;
+    if (!this->capture_generic_value_(caps[i])) return false;
+
+    if (field.expected_prefix_len > 0) {
+      if (caps[i].value.size() < field.expected_prefix_len ||
+          !std::ranges::equal(caps[i].value.first(field.expected_prefix_len),
+                              std::span(field.expected_prefix).first(field.expected_prefix_len))) {
+        return false;
+      }
+    }
+  }
+
+  for (uint8_t i = 0; i < elem_count; i++) {
+    this->emit_object_(pat, caps[i]);
   }
 
   consumed = elem_count;
@@ -781,21 +794,29 @@ AxdrDescriptorPattern& AxdrParser::insert_pattern_(AxdrDescriptorPattern pat) {
 }
 
 bool AxdrParser::register_flat_positional_pattern(const char* name, const int priority,
-                                                   const std::span<const ObisId> obis_per_index) {
+                                                   const std::span<const FlatFieldSpec> fields) {
   AxdrDescriptorPattern pat{};
   pat.name = name;
   pat.priority = priority;
   std::ranges::fill(pat.steps, AxdrPatternStep{ AxdrTokenType::END_OF_PATTERN });
   pat.steps[0] = { AxdrTokenType::FLAT_POSITIONAL };
 
-  if (obis_per_index.size() > AxdrDescriptorPattern::MAX_FLAT_OBIS) return false;
+  if (fields.size() > AxdrDescriptorPattern::MAX_FLAT_FIELDS) return false;
 
-  static_assert(AxdrDescriptorPattern::MAX_FLAT_OBIS <= std::numeric_limits<uint8_t>::max(), "Truncation of flat pattern fields");
-  pat.flat_obis_count = static_cast<uint8_t>(obis_per_index.size());
-  std::ranges::copy(obis_per_index.first(pat.flat_obis_count), pat.flat_obis.begin());
+  static_assert(AxdrDescriptorPattern::MAX_FLAT_FIELDS <= std::numeric_limits<uint8_t>::max(), "Truncation of flat pattern fields");
+  pat.flat_field_count = static_cast<uint8_t>(fields.size());
+  std::ranges::copy(fields.first(pat.flat_field_count), pat.flat_fields.begin());
 
   this->insert_pattern_(pat);
   return true;
+}
+
+std::optional<FlatFieldSpec> FlatFieldSpec::with_prefix(const ObisId o, const std::span<const uint8_t> prefix) {
+  if (prefix.size() > MAX_PREFIX_BYTES) return std::nullopt;
+  FlatFieldSpec spec{ o };
+  spec.expected_prefix_len = static_cast<uint8_t>(prefix.size());
+  std::ranges::copy(prefix, spec.expected_prefix.begin());
+  return spec;
 }
 
 }  // namespace dlms_parser

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -39,6 +40,22 @@ struct AxdrPatternStep final {
   uint8_t param_u8_a{ 0 };
 };
 
+struct FlatFieldSpec final {
+  ObisId obis{};
+
+  // Optional guard: if expected_prefix_len > 0, the captured value at this position must
+  // start with these bytes or the whole FLAT_POSITIONAL match is rejected.
+  static constexpr size_t MAX_PREFIX_BYTES = 16;
+  std::array<uint8_t, MAX_PREFIX_BYTES> expected_prefix{};
+  uint8_t expected_prefix_len{ 0 };
+
+  constexpr FlatFieldSpec() = default;
+  constexpr explicit FlatFieldSpec(const ObisId o) : obis(o) {}
+
+  // Returns an empty optional if prefix has more than MAX_PREFIX_BYTES bytes.
+  static std::optional<FlatFieldSpec> with_prefix(ObisId o, std::span<const uint8_t> prefix);
+};
+
 struct AxdrDescriptorPattern final {
   const char* name{ nullptr };
   int priority{ 0 };
@@ -46,12 +63,12 @@ struct AxdrDescriptorPattern final {
   uint16_t default_class_id{ 0 };
   ObisId default_obis{};
 
-  // Only used by FLAT_POSITIONAL patterns: the OBIS code for each element of a fixed-size,
+  // Only used by FLAT_POSITIONAL patterns: one field spec per element of a fixed-size,
   // untagged STRUCTURE (vendor sends bare values, no per-element class-id/OBIS/attribute
   // metadata — position is the only thing identifying a field).
-  static constexpr size_t MAX_FLAT_OBIS = 32;
-  std::array<ObisId, MAX_FLAT_OBIS> flat_obis{};
-  uint8_t flat_obis_count{ 0 };
+  static constexpr size_t MAX_FLAT_FIELDS = 32;
+  std::array<FlatFieldSpec, MAX_FLAT_FIELDS> flat_fields{};
+  uint8_t flat_field_count{ 0 };
 };
 
 struct AxdrCapture final {
@@ -91,8 +108,8 @@ public:
   void register_pattern(const char* name, const char* dsl, int priority, ObisId default_obis = {});
 
   // Register a pattern for a fixed-size STRUCTURE whose elements carry no per-element OBIS/class-id
-  // tagging at all — obis_per_index[i] is assigned to element i.
-  bool register_flat_positional_pattern(const char* name, int priority, std::span<const ObisId> obis_per_index);
+  // tagging at all — fields[i] describes element i.
+  bool register_flat_positional_pattern(const char* name, int priority, std::span<const FlatFieldSpec> fields);
 
   void clear_patterns();
 

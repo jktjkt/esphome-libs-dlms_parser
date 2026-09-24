@@ -55,8 +55,8 @@ void DlmsParser::register_pattern(const char* name, const char* dsl, const int p
 }
 
 bool DlmsParser::register_flat_positional_pattern(const char* name, const int priority,
-                                                   const std::span<const ObisId> obis_per_index) {
-  return axdr_parser_.register_flat_positional_pattern(name, priority, obis_per_index);
+                                                   const std::span<const FlatFieldSpec> fields) {
+  return axdr_parser_.register_flat_positional_pattern(name, priority, fields);
 }
 
 ParseResult DlmsParser::parse(std::span<uint8_t> buf) {
