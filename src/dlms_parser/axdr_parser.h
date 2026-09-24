@@ -28,6 +28,7 @@ enum class AxdrTokenType : uint8_t {
   EXPECT_SCALER_TAGGED,
   EXPECT_UNIT_ENUM_TAGGED,
   SELF_DESC,
+  FLAT_POSITIONAL,
   GOING_DOWN,
   GOING_UP,
   END_OF_PATTERN = 0xFF
@@ -44,6 +45,13 @@ struct AxdrDescriptorPattern final {
   AxdrPatternStep steps[32]{};
   uint16_t default_class_id{ 0 };
   ObisId default_obis{};
+
+  // Only used by FLAT_POSITIONAL patterns: the OBIS code for each element of a fixed-size,
+  // untagged STRUCTURE (vendor sends bare values, no per-element class-id/OBIS/attribute
+  // metadata — position is the only thing identifying a field).
+  static constexpr size_t MAX_FLAT_OBIS = 32;
+  std::array<ObisId, MAX_FLAT_OBIS> flat_obis{};
+  uint8_t flat_obis_count{ 0 };
 };
 
 struct AxdrCapture final {
@@ -81,6 +89,11 @@ public:
 
   // Register a named pattern from the DSL string, e.g. "TC,TO,TS,TV".
   void register_pattern(const char* name, const char* dsl, int priority, ObisId default_obis = {});
+
+  // Register a pattern for a fixed-size STRUCTURE whose elements carry no per-element OBIS/class-id
+  // tagging at all — obis_per_index[i] is assigned to element i.
+  bool register_flat_positional_pattern(const char* name, int priority, std::span<const ObisId> obis_per_index);
+
   void clear_patterns();
 
   // Parse AXDR bytes. Fires cooked_cb and/or raw_cb for each pattern match.
@@ -96,6 +109,7 @@ private:
   std::array<AxdrDescriptorPattern, MAX_PATTERNS> patterns_;
   size_t patterns_count_{ 0 };
   AxdrDescriptorPattern& register_pattern_dsl_(const char* name, std::string_view dsl, int priority);
+  AxdrDescriptorPattern& insert_pattern_(AxdrDescriptorPattern pat);
 
   // Parse-time state — reset at the start of each parse() call
   std::span<const uint8_t> buffer_{};
@@ -119,6 +133,8 @@ private:
   bool capture_generic_value_(AxdrCapture& c);
   bool try_match_patterns_(DlmsDataType container_type, uint8_t elem_idx, uint8_t elem_count);
   bool parse_self_describing_(DlmsDataType container_type, uint8_t elem_idx, uint8_t elem_count,
+                              const AxdrDescriptorPattern& pat, uint8_t& consumed);
+  bool parse_flat_positional_(DlmsDataType container_type, uint8_t elem_idx, uint8_t elem_count,
                               const AxdrDescriptorPattern& pat, uint8_t& consumed);
   bool match_pattern_(DlmsDataType container_type, uint8_t elem_idx, uint8_t elem_count,
                       const AxdrDescriptorPattern& pat, uint8_t& consumed);

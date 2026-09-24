@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace dlms_parser {
@@ -462,6 +463,26 @@ bool AxdrParser::parse_self_describing_(const DlmsDataType container_type, const
   return true;
 }
 
+bool AxdrParser::parse_flat_positional_(const DlmsDataType container_type, const uint8_t elem_idx,
+                                        const uint8_t elem_count, const AxdrDescriptorPattern& pat,
+                                        uint8_t& consumed) {
+  // Whole-container matcher, like SelfDesc: only fires at element 0 of a STRUCTURE whose
+  // element count matches this pattern's known field count exactly.
+  if (container_type != DlmsDataType::STRUCTURE || elem_idx != 0) return false;
+  if (elem_count != pat.flat_obis_count) return false;
+
+  for (uint8_t i = 0; i < elem_count; i++) {
+    AxdrCapture cap{};
+    cap.elem_idx = static_cast<uint32_t>(this->pos_);
+    cap.obis = pat.flat_obis[i];
+    if (!this->capture_generic_value_(cap)) return false;
+    this->emit_object_(pat, cap);
+  }
+
+  consumed = elem_count;
+  return true;
+}
+
 bool AxdrParser::match_pattern_(const DlmsDataType container_type, const uint8_t elem_idx, const uint8_t elem_count,
                                 const AxdrDescriptorPattern& pat, uint8_t& consumed) {
   AxdrCapture cap{};
@@ -571,6 +592,9 @@ bool AxdrParser::match_pattern_(const DlmsDataType container_type, const uint8_t
         break;
       case AxdrTokenType::SELF_DESC: {
         return this->parse_self_describing_(container_type, elem_idx, elem_count, pat, consumed);
+      }
+      case AxdrTokenType::FLAT_POSITIONAL: {
+        return this->parse_flat_positional_(container_type, elem_idx, elem_count, pat, consumed);
       }
       case AxdrTokenType::GOING_DOWN: level++; break;
       case AxdrTokenType::GOING_UP:   level--; break;
@@ -725,6 +749,10 @@ AxdrDescriptorPattern& AxdrParser::register_pattern_dsl_(const char* name, const
     }
   }
 
+  return this->insert_pattern_(pat);
+}
+
+AxdrDescriptorPattern& AxdrParser::insert_pattern_(AxdrDescriptorPattern pat) {
   // Find sorted position for insertion into the fixed array patterns_
   size_t insert_pos = 0;
   while (insert_pos < this->patterns_count_ && this->patterns_[insert_pos].priority <= pat.priority) {
@@ -750,6 +778,24 @@ AxdrDescriptorPattern& AxdrParser::register_pattern_dsl_(const char* name, const
     return this->patterns_[insert_pos];
   }
   return this->patterns_[MAX_PATTERNS - 1];
+}
+
+bool AxdrParser::register_flat_positional_pattern(const char* name, const int priority,
+                                                   const std::span<const ObisId> obis_per_index) {
+  AxdrDescriptorPattern pat{};
+  pat.name = name;
+  pat.priority = priority;
+  std::ranges::fill(pat.steps, AxdrPatternStep{ AxdrTokenType::END_OF_PATTERN });
+  pat.steps[0] = { AxdrTokenType::FLAT_POSITIONAL };
+
+  if (obis_per_index.size() > AxdrDescriptorPattern::MAX_FLAT_OBIS) return false;
+
+  static_assert(AxdrDescriptorPattern::MAX_FLAT_OBIS <= std::numeric_limits<uint8_t>::max(), "Truncation of flat pattern fields");
+  pat.flat_obis_count = static_cast<uint8_t>(obis_per_index.size());
+  std::ranges::copy(obis_per_index.first(pat.flat_obis_count), pat.flat_obis.begin());
+
+  this->insert_pattern_(pat);
+  return true;
 }
 
 }  // namespace dlms_parser
