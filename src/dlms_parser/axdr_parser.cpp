@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <charconv>
 #include <limits>
 #include <utility>
 
@@ -817,6 +818,91 @@ std::optional<FlatFieldSpec> FlatFieldSpec::with_prefix(const ObisId o, const st
   spec.expected_prefix_len = static_cast<uint8_t>(prefix.size());
   std::ranges::copy(prefix, spec.expected_prefix.begin());
   return spec;
+}
+
+namespace {
+
+// Parses "a.b.c.d.e.f" (6 dot-separated decimal bytes) into an ObisId.
+bool parse_obis_text(const std::string_view text, ObisId& out) {
+  size_t part_start = 0;
+  size_t part_idx = 0;
+  for (size_t i = 0; i <= text.size(); i++) {
+    if (i != text.size() && text[i] != '.') continue;
+    if (part_idx >= 6) return false;
+    const std::string_view num = text.substr(part_start, i - part_start);
+    part_start = i + 1;
+    uint8_t v = 0;
+    const auto [ptr, ec] = std::from_chars(num.data(), num.data() + num.size(), v);
+    if (ec != std::errc{} || ptr != num.data() + num.size()) return false;
+    out.v[part_idx++] = v;
+  }
+  return part_idx == 6;
+}
+
+// Parses a contiguous hex string (even length, no separators) into raw bytes.
+bool parse_hex_bytes(const std::string_view hex, const std::span<uint8_t> out, size_t& out_len) {
+  if (hex.size() % 2 != 0 || hex.size() / 2 > out.size()) return false;
+  out_len = hex.size() / 2;
+  for (size_t i = 0; i < out_len; i++) {
+    const auto [ptr, ec] = std::from_chars(hex.data() + i * 2, hex.data() + i * 2 + 2, out[i], 16);
+    if (ec != std::errc{} || ptr != hex.data() + i * 2 + 2) return false;
+  }
+  return true;
+}
+
+} // namespace
+
+bool AxdrParser::register_flat_positional_pattern(const char* name, const int priority,
+                                                   const char* field_list) {
+  if (field_list == nullptr) return false;
+  const std::string_view text{ field_list };
+
+  auto trim = [](const std::string_view s) -> std::string_view {
+    const size_t b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string_view::npos) return {};
+    const size_t e = s.find_last_not_of(" \t\r\n");
+    return s.substr(b, e - b + 1);
+  };
+
+  std::array<FlatFieldSpec, AxdrDescriptorPattern::MAX_FLAT_FIELDS> fields{};
+  size_t field_count = 0;
+  size_t start = 0;
+
+  for (size_t i = 0; i <= text.size(); i++) {
+    if (i != text.size() && text[i] != ',') continue;
+    const std::string_view token = trim(text.substr(start, i - start));
+    start = i + 1;
+    if (token.empty()) return false;
+    if (field_count >= fields.size()) return false;
+
+    std::string_view obis_part = token;
+    std::string_view hex_part{};
+    if (const size_t tilde = token.find('~'); tilde != std::string_view::npos) {
+      obis_part = trim(token.substr(0, tilde));
+      hex_part = trim(token.substr(tilde + 1));
+      if (hex_part.empty()) return false;
+    }
+
+    ObisId obis{};
+    if (!parse_obis_text(obis_part, obis)) return false;
+
+    if (hex_part.empty()) {
+      fields[field_count++] = FlatFieldSpec{ obis };
+      continue;
+    }
+
+    std::array<uint8_t, FlatFieldSpec::MAX_PREFIX_BYTES> prefix_bytes{};
+    size_t prefix_len = 0;
+    if (!parse_hex_bytes(hex_part, prefix_bytes, prefix_len)) return false;
+
+    auto spec = FlatFieldSpec::with_prefix(obis, std::span(prefix_bytes).first(prefix_len));
+    if (!spec) return false;
+    fields[field_count++] = *spec;
+  }
+
+  if (field_count == 0) return false;
+  return this->register_flat_positional_pattern(name, priority,
+      std::span<const FlatFieldSpec>(fields.data(), field_count));
 }
 
 }  // namespace dlms_parser

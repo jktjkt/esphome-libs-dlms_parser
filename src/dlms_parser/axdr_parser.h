@@ -111,6 +111,13 @@ public:
   // tagging at all — fields[i] describes element i.
   bool register_flat_positional_pattern(const char* name, int priority, std::span<const FlatFieldSpec> fields);
 
+  // Same, but parsed from text at runtime: comma-separated "obis" or "obis~hexbytes"
+  // entries, e.g. "0.0.96.1.4.255~5A50413348414E3030323030, 0.0.1.0.0.255".
+  // The "~hexbytes" suffix is optional and sets that field's expected_prefix guard.
+  // Returns false (registers nothing) if field_list is malformed. The parsed OBIS codes
+  // and prefix bytes are copied.
+  bool register_flat_positional_pattern(const char* name, int priority, const char* field_list);
+
   void clear_patterns();
 
   // Parse AXDR bytes. Fires cooked_cb and/or raw_cb for each pattern match.
