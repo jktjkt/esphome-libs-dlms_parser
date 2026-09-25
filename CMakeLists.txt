@@ -17,6 +17,8 @@ cmake_policy(SET CMP0092 NEW) # don't add "/W3" to the compilation flags when us
 project(dlms_parser)
 enable_testing()
 include(FetchContent)
+option(DLMS_ENABLE_SANITIZERS "Build dlms_parser and its tests with ASan/UBSan" ON)
+option(DLMS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES 0) # For clang, module scanning requires "clang-scan-deps". It is not included in some Linux distros.
 
 if(MINGW)
@@ -74,7 +76,7 @@ target_compile_features(dlms_parser PUBLIC cxx_std_20)
 
 # enable warnings
 add_library(dlms_parser_warnings INTERFACE)
-myproject_set_project_warnings(dlms_parser_warnings ON "" "" "" "")
+myproject_set_project_warnings(dlms_parser_warnings ${DLMS_WARNINGS_AS_ERRORS} "" "" "" "")
 if(NOT MSVC)
   # We use `vsnprintf(buffer.data(), buffer.size(), fmt, args);` inside logging function.
   # Thus this warning is a false positive.
@@ -84,7 +86,7 @@ target_link_libraries(dlms_parser PUBLIC dlms_parser_warnings)
 
 # enable sanitizers
 add_library(dlms_parser_sanitizers INTERFACE)
-myproject_enable_sanitizers(dlms_parser_sanitizers ON ON ON OFF OFF)
+myproject_enable_sanitizers(dlms_parser_sanitizers ${DLMS_ENABLE_SANITIZERS} ${DLMS_ENABLE_SANITIZERS} ${DLMS_ENABLE_SANITIZERS} OFF OFF)
 target_link_libraries(dlms_parser PUBLIC dlms_parser_sanitizers)
 if(MSVC)
   cmake_path(GET CMAKE_CXX_COMPILER PARENT_PATH MSVC_TOOLS_DIR)
