@@ -14,6 +14,8 @@
 //   -C                  Skip CRC/checksum validation
 //   -v                  Verbose logging (default: warnings only)
 //   -vv                 Very verbose logging (all levels)
+//   --json               Emit machine-readable JSON instead of text
+//                         (only available when built with DLMS_DECODE_READOUT_JSON)
 //
 // Examples:
 //   ./decode_readout tests/dumps/hdlc_norway_han_1phase.log
@@ -33,6 +35,10 @@
 
 #include "dlms_parser/dlms_parser.h"
 #include "dlms_parser/decryption/aes_128_gcm_decryptor_mbedtls.h"
+
+#ifdef DLMS_DECODE_READOUT_JSON
+#include <nlohmann/json.hpp>
+#endif
 
 // Hex file reader — supports spaced hex, concatenated hex, line continuations
 static constexpr bool is_hex_char(char c) {
@@ -176,9 +182,13 @@ int main(int argc, char* argv[]) {
   std::string_view file_path;
   std::string_view key_str;
   std::vector<std::string> custom_patterns;
+  std::vector<std::string> custom_flat_patterns;
   bool skip_defaults = false;
   bool skip_crc = false;
   int verbosity = 0;
+#ifdef DLMS_DECODE_READOUT_JSON
+  bool json_output = false;
+#endif
 
   for (int i = 1; i < argc; i++) {
     std::string_view arg = argv[i];
@@ -187,6 +197,9 @@ int main(int argc, char* argv[]) {
     }
     else if (arg == "-p" && i + 1 < argc) {
       custom_patterns.emplace_back(argv[++i]);
+    }
+    else if (arg == "-f" && i + 1 < argc) {
+      custom_flat_patterns.emplace_back(argv[++i]);
     }
     else if (arg == "-P") {
       skip_defaults = true;
@@ -200,6 +213,11 @@ int main(int argc, char* argv[]) {
     else if (arg == "-v") {
       verbosity = 1;
     }
+#ifdef DLMS_DECODE_READOUT_JSON
+    else if (arg == "--json") {
+      json_output = true;
+    }
+#endif
     else if (!arg.starts_with('-')) {
       file_path = arg;
     }
@@ -216,16 +234,29 @@ int main(int argc, char* argv[]) {
       "Options:\n"
       "  -k <hex_key>        AES-128-GCM decryption key (32 hex chars)\n"
       "  -p <dsl>            Register a custom pattern (repeatable)\n"
+      "  -f <fields>         Register a custom flat-positional pattern (repeatable):\n"
+      "                      comma-separated \"obis\" or \"obis~hexbytes\" entries, e.g.\n"
+      "                      \"0.0.96.1.4.255~464F4F303031, 0.0.1.0.0.255, 0.0.96.1.1.255\"\n"
+      "                      (the ~hexbytes suffix is an optional literal-prefix guard,\n"
+      "                      hex-encoded so it can hold any byte value)\n"
       "  -P                  Skip loading default patterns\n"
       "  -C                  Skip CRC/checksum validation\n"
       "  -v                  Verbose logging\n"
       "  -vv                 Very verbose logging\n"
+#ifdef DLMS_DECODE_READOUT_JSON
+      "  --json              Emit machine-readable JSON instead of text\n"
+#endif
       "\n"
       "Examples:\n"
       "  {} tests/dumps/hdlc_norway_han_1phase.log\n"
       "  {} -k 36C66639E48A8CA4D6BC8B282A793BBB tests/dumps/mbus_netz_noe_p1.log\n"
-      "  {} -p \"TO, TV\" -k 5C316162209EBB790B52EB0E7FC5B11C tests/dumps/hdlc_landis_gyr_e450.log\n",
-      argv[0], argv[0], argv[0], argv[0]);
+      "  {} -p \"TO, TV\" -k 5C316162209EBB790B52EB0E7FC5B11C tests/dumps/hdlc_landis_gyr_e450.log\n"
+      "  {} -f \"0.0.96.1.4.255~5A50413348414E3030323030, 0.0.1.0.0.255, 0.0.96.1.1.255, "
+      "0.0.96.3.10.255, 0.0.17.0.0.255, 0.1.96.3.10.255, 0.2.96.3.10.255, 0.3.96.3.10.255, "
+      "0.4.96.3.10.255, 0.0.96.14.0.255, 1.0.1.7.0.255, 1.0.21.7.0.255, 1.0.41.7.0.255, "
+      "1.0.61.7.0.255, 1.0.2.7.0.255, 1.0.22.7.0.255, 1.0.42.7.0.255, 1.0.62.7.0.255, "
+      "1.0.1.8.0.255, 1.0.1.8.1.255, 1.0.1.8.2.255, 1.0.2.8.0.255\" -P <file>  # ZPA AM375\n",
+      argv[0], argv[0], argv[0], argv[0], argv[0]);
     return 1;
   }
 
@@ -267,10 +298,39 @@ int main(int argc, char* argv[]) {
 
   size_t obj_count_numeric = 0;
   size_t obj_count_string = 0;
+#ifdef DLMS_DECODE_READOUT_JSON
+  nlohmann::json json_objects = nlohmann::json::array();
+#endif
 
   auto cooked_cb = [&](const dlms_parser::AxdrCapture& capture) {
     std::array<char, 32> obis_buf;
     const auto obis_str = capture.obis.to_string(obis_buf);
+
+#ifdef DLMS_DECODE_READOUT_JSON
+    if (json_output) {
+      nlohmann::json obj{
+        { "obis", obis_str },
+        { "class_id", capture.class_id },
+        { "type", dlms_parser::to_string(capture.value_type) },
+      };
+      if (capture.is_numeric()) {
+        obj_count_numeric++;
+        // Round-trip through std::format so e.g. 230.1f serializes as 230.1, not 230.10000610351562.
+        obj["value"] = std::stod(std::format("{}", capture.value_as_float_with_scaler_applied()));
+      }
+      else {
+        obj_count_string++;
+        std::array<char, 128> str_val_buf;
+        obj["value"] = std::string{ capture.value_as_string(str_val_buf) };
+      }
+      if (capture.has_scaler_unit) {
+        obj["scaler"] = capture.scaler;
+        obj["unit"] = capture.unit_enum;
+      }
+      json_objects.push_back(std::move(obj));
+      return;
+    }
+#endif
 
     if (capture.is_numeric()) {
       obj_count_numeric++;
@@ -315,13 +375,38 @@ int main(int argc, char* argv[]) {
   for (const auto& pat : custom_patterns) {
     parser.register_pattern("CUSTOM", pat.c_str(), 0, {});
   }
+  for (const auto& pat : custom_flat_patterns) {
+    if (!parser.register_flat_positional_pattern("CUSTOM_FLAT", 0, pat.c_str())) {
+      std::cerr << std::format("Error: malformed -f field list: {}\n", pat);
+      return 1;
+    }
+  }
 
-  std::cout << std::format("Input:   {} ({} bytes)\n", file_path, data.size());
-  std::cout << std::format("Format:  {} (auto-detected)\n", to_string(fmt));
-  if (!key_str.empty()) std::cout << std::format("Key:     {}\n", key_str);
-  std::cout << "\n";
+#ifdef DLMS_DECODE_READOUT_JSON
+  if (!json_output) {
+#endif
+    std::cout << std::format("Input:   {} ({} bytes)\n", file_path, data.size());
+    std::cout << std::format("Format:  {} (auto-detected)\n", to_string(fmt));
+    if (!key_str.empty()) std::cout << std::format("Key:     {}\n", key_str);
+    std::cout << "\n";
+#ifdef DLMS_DECODE_READOUT_JSON
+  }
+#endif
 
   auto [count, consumed] = parser.parse(data);
+
+#ifdef DLMS_DECODE_READOUT_JSON
+  if (json_output) {
+    nlohmann::json doc{
+      { "bytes", data.size() },
+      { "format", to_string(fmt) },
+      { "objects", std::move(json_objects) },
+      { "bytes_consumed", consumed },
+    };
+    std::cout << doc.dump(2, ' ', false, nlohmann::json::error_handler_t::replace) << "\n";
+    return count > 0 ? 0 : 1;
+  }
+#endif
 
   std::cout << std::format("\nTotal: {} objects matched, {} bytes consumed\n", count, consumed);
   std::cout << std::format("  Numeric: {}\n", obj_count_numeric);
