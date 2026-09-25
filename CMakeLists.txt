@@ -50,9 +50,11 @@ FetchContent_Declare(
   GIT_REPOSITORY https://bearssl.org/git/BearSSL
   GIT_TAG v0.6)
 FetchContent_MakeAvailable(bearssl) # BearSSL has no CMakeLists.txt, so this only populates the source dir
-file(GLOB_RECURSE bearssl_sources CONFIGURE_DEPENDS "${bearssl_SOURCE_DIR}/src/*.c")
-add_library(bearssl STATIC ${bearssl_sources})
-target_include_directories(bearssl SYSTEM PUBLIC "${bearssl_SOURCE_DIR}/inc" PRIVATE "${bearssl_SOURCE_DIR}/src")
+if(NOT TARGET bearssl) # a dependency provider may have already defined this as an imported target
+  file(GLOB_RECURSE bearssl_sources CONFIGURE_DEPENDS "${bearssl_SOURCE_DIR}/src/*.c")
+  add_library(bearssl STATIC ${bearssl_sources})
+  target_include_directories(bearssl SYSTEM PUBLIC "${bearssl_SOURCE_DIR}/inc" PRIVATE "${bearssl_SOURCE_DIR}/src")
+endif()
 
 # Combine mbedtls and bearssl into a single "crypto" target to simplify linking
 add_library(dlms_cryptography INTERFACE)
