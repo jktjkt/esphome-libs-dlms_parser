@@ -29,7 +29,8 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/doctest/doctest
   GIT_TAG v2.5.3)
 FetchContent_MakeAvailable(doctest)
-include("${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake")
+list(APPEND CMAKE_MODULE_PATH "${doctest_SOURCE_DIR}/scripts/cmake" "${doctest_DIR}")
+include(doctest)
 
 # mbedtls
 set(ENABLE_PROGRAMS OFF CACHE INTERNAL "")
