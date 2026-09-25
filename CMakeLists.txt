@@ -43,10 +43,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(mbedtls)
 
 # bearssl
-FetchContent_Populate(
+FetchContent_Declare(
   bearssl
   GIT_REPOSITORY https://bearssl.org/git/BearSSL
   GIT_TAG v0.6)
+FetchContent_MakeAvailable(bearssl) # BearSSL has no CMakeLists.txt, so this only populates the source dir
 file(GLOB_RECURSE bearssl_sources CONFIGURE_DEPENDS "${bearssl_SOURCE_DIR}/src/*.c")
 add_library(bearssl STATIC ${bearssl_sources})
 target_include_directories(bearssl SYSTEM PUBLIC "${bearssl_SOURCE_DIR}/inc" PRIVATE "${bearssl_SOURCE_DIR}/src")
@@ -57,10 +58,12 @@ target_link_libraries(dlms_cryptography INTERFACE mbedtls bearssl)
 target_include_directories(dlms_cryptography SYSTEM INTERFACE $<TARGET_PROPERTY:mbedtls,INTERFACE_INCLUDE_DIRECTORIES>) # disable warnings for mbedtls headers
 
 # cmake_template for warnings and sanitizers
-FetchContent_Populate(
+FetchContent_Declare(
   cmake_template
   GIT_REPOSITORY https://github.com/cpp-best-practices/cmake_template
-  GIT_TAG b86318abbf55a657a11a0cf2acce69f221841b22)
+  GIT_TAG b86318abbf55a657a11a0cf2acce69f221841b22
+  SOURCE_SUBDIR cmake) # no CMakeLists.txt there, so this only populates instead of add_subdirectory-ing the whole template project
+FetchContent_MakeAvailable(cmake_template)
 include(${cmake_template_SOURCE_DIR}/cmake/CompilerWarnings.cmake)
 include(${cmake_template_SOURCE_DIR}/cmake/Sanitizers.cmake)
 
