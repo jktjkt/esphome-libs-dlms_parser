@@ -14,6 +14,8 @@
 //   -C                  Skip CRC/checksum validation
 //   -v                  Verbose logging (default: warnings only)
 //   -vv                 Very verbose logging (all levels)
+//   --json               Emit machine-readable JSON instead of text
+//                         (only available when built with DLMS_DECODE_READOUT_JSON)
 //
 // Examples:
 //   ./decode_readout tests/dumps/hdlc_norway_han_1phase.log
@@ -33,6 +35,10 @@
 
 #include "dlms_parser/dlms_parser.h"
 #include "dlms_parser/decryption/aes_128_gcm_decryptor_mbedtls.h"
+
+#ifdef DLMS_DECODE_READOUT_JSON
+#include <nlohmann/json.hpp>
+#endif
 
 // Hex file reader — supports spaced hex, concatenated hex, line continuations
 static constexpr bool is_hex_char(char c) {
@@ -179,6 +185,9 @@ int main(int argc, char* argv[]) {
   bool skip_defaults = false;
   bool skip_crc = false;
   int verbosity = 0;
+#ifdef DLMS_DECODE_READOUT_JSON
+  bool json_output = false;
+#endif
 
   for (int i = 1; i < argc; i++) {
     std::string_view arg = argv[i];
@@ -200,6 +209,11 @@ int main(int argc, char* argv[]) {
     else if (arg == "-v") {
       verbosity = 1;
     }
+#ifdef DLMS_DECODE_READOUT_JSON
+    else if (arg == "--json") {
+      json_output = true;
+    }
+#endif
     else if (!arg.starts_with('-')) {
       file_path = arg;
     }
@@ -220,6 +234,9 @@ int main(int argc, char* argv[]) {
       "  -C                  Skip CRC/checksum validation\n"
       "  -v                  Verbose logging\n"
       "  -vv                 Very verbose logging\n"
+#ifdef DLMS_DECODE_READOUT_JSON
+      "  --json              Emit machine-readable JSON instead of text\n"
+#endif
       "\n"
       "Examples:\n"
       "  {} tests/dumps/hdlc_norway_han_1phase.log\n"
@@ -267,10 +284,39 @@ int main(int argc, char* argv[]) {
 
   size_t obj_count_numeric = 0;
   size_t obj_count_string = 0;
+#ifdef DLMS_DECODE_READOUT_JSON
+  nlohmann::json json_objects = nlohmann::json::array();
+#endif
 
   auto cooked_cb = [&](const dlms_parser::AxdrCapture& capture) {
     std::array<char, 32> obis_buf;
     const auto obis_str = capture.obis.to_string(obis_buf);
+
+#ifdef DLMS_DECODE_READOUT_JSON
+    if (json_output) {
+      nlohmann::json obj{
+        { "obis", obis_str },
+        { "class_id", capture.class_id },
+        { "type", dlms_parser::to_string(capture.value_type) },
+      };
+      if (capture.is_numeric()) {
+        obj_count_numeric++;
+        // Round-trip through std::format so e.g. 230.1f serializes as 230.1, not 230.10000610351562.
+        obj["value"] = std::stod(std::format("{}", capture.value_as_float_with_scaler_applied()));
+      }
+      else {
+        obj_count_string++;
+        std::array<char, 128> str_val_buf;
+        obj["value"] = std::string{ capture.value_as_string(str_val_buf) };
+      }
+      if (capture.has_scaler_unit) {
+        obj["scaler"] = capture.scaler;
+        obj["unit"] = capture.unit_enum;
+      }
+      json_objects.push_back(std::move(obj));
+      return;
+    }
+#endif
 
     if (capture.is_numeric()) {
       obj_count_numeric++;
@@ -316,12 +362,31 @@ int main(int argc, char* argv[]) {
     parser.register_pattern("CUSTOM", pat.c_str(), 0, {});
   }
 
-  std::cout << std::format("Input:   {} ({} bytes)\n", file_path, data.size());
-  std::cout << std::format("Format:  {} (auto-detected)\n", to_string(fmt));
-  if (!key_str.empty()) std::cout << std::format("Key:     {}\n", key_str);
-  std::cout << "\n";
+#ifdef DLMS_DECODE_READOUT_JSON
+  if (!json_output) {
+#endif
+    std::cout << std::format("Input:   {} ({} bytes)\n", file_path, data.size());
+    std::cout << std::format("Format:  {} (auto-detected)\n", to_string(fmt));
+    if (!key_str.empty()) std::cout << std::format("Key:     {}\n", key_str);
+    std::cout << "\n";
+#ifdef DLMS_DECODE_READOUT_JSON
+  }
+#endif
 
   auto [count, consumed] = parser.parse(data);
+
+#ifdef DLMS_DECODE_READOUT_JSON
+  if (json_output) {
+    nlohmann::json doc{
+      { "bytes", data.size() },
+      { "format", to_string(fmt) },
+      { "objects", std::move(json_objects) },
+      { "bytes_consumed", consumed },
+    };
+    std::cout << doc.dump(2, ' ', false, nlohmann::json::error_handler_t::replace) << "\n";
+    return count > 0 ? 0 : 1;
+  }
+#endif
 
   std::cout << std::format("\nTotal: {} objects matched, {} bytes consumed\n", count, consumed);
   std::cout << std::format("  Numeric: {}\n", obj_count_numeric);

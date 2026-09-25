@@ -2,12 +2,13 @@
 #
 # Enable with: -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=<path to this file>
 #
-# DLMS_USE_SYSTEM_DOCTEST / _MBEDTLS / _BEARSSL (default ON)
+# DLMS_USE_SYSTEM_DOCTEST / _MBEDTLS / _BEARSSL / _NLOHMANN_JSON (default ON)
 #   Satisfy each dependency from the system package instead of building it
 #   from source. Independent switches: a distro whose system mbedtls is too
 #   old for a library feature (e.g. EL9's 2.28 lacks the multi-part PSA AEAD
 #   API) can turn off just that one and bundle a newer mbedtls via
 #   DLMS_DEPS_SOURCE_ROOT, while still using the system doctest/bearssl.
+#   _NLOHMANN_JSON only matters when DLMS_DECODE_READOUT_JSON is ON.
 #   cmake_template isn't listed here: nobody packages it, so a packaging
 #   recipe stages it as a source tarball via DLMS_DEPS_SOURCE_ROOT instead.
 #
@@ -30,6 +31,7 @@ include(FetchContent)
 option(DLMS_USE_SYSTEM_DOCTEST "Satisfy doctest from the system package" ON)
 option(DLMS_USE_SYSTEM_MBEDTLS "Satisfy mbedtls from the system package" ON)
 option(DLMS_USE_SYSTEM_BEARSSL "Satisfy bearssl from the system package" ON)
+option(DLMS_USE_SYSTEM_NLOHMANN_JSON "Satisfy nlohmann_json from the system package" ON)
 set(DLMS_DEPS_SOURCE_ROOT "" CACHE PATH "Directory of pre-populated dependency checkouts for offline builds")
 
 function(dlms_provide_dependency method dep_name)
@@ -71,6 +73,15 @@ function(dlms_provide_dependency method dep_name)
       add_library(bearssl INTERFACE IMPORTED)
       target_include_directories(bearssl INTERFACE "${DLMS_BEARSSL_INCLUDE_DIR}")
       target_link_libraries(bearssl INTERFACE "${DLMS_BEARSSL_LIBRARY}")
+      FetchContent_SetPopulated(${dep_name})
+      return()
+    endif()
+  endif()
+
+  if(dep_name STREQUAL "nlohmann_json" AND DLMS_USE_SYSTEM_NLOHMANN_JSON)
+    find_package(nlohmann_json CONFIG QUIET)
+    if(nlohmann_json_FOUND)
+      message(STATUS "dlms_parser: using the system nlohmann_json package (${nlohmann_json_DIR})")
       FetchContent_SetPopulated(${dep_name})
       return()
     endif()

@@ -19,6 +19,7 @@ enable_testing()
 include(FetchContent)
 option(DLMS_ENABLE_SANITIZERS "Build dlms_parser and its tests with ASan/UBSan" ON)
 option(DLMS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+option(DLMS_DECODE_READOUT_JSON "Build decode_readout with --json output (needs nlohmann_json)" OFF)
 set(CMAKE_CXX_SCAN_FOR_MODULES 0) # For clang, module scanning requires "clang-scan-deps". It is not included in some Linux distros.
 
 if(MINGW)
@@ -107,3 +108,14 @@ doctest_discover_tests(dlms_parser_test)
 add_executable(decode_readout tools/decode_readout.cpp)
 target_link_libraries(decode_readout PRIVATE dlms_parser dlms_cryptography)
 target_include_directories(decode_readout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+if(DLMS_DECODE_READOUT_JSON)
+  FetchContent_Declare(
+    nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(nlohmann_json)
+  target_link_libraries(decode_readout PRIVATE nlohmann_json::nlohmann_json)
+  target_include_directories(decode_readout SYSTEM PRIVATE $<TARGET_PROPERTY:nlohmann_json::nlohmann_json,INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(decode_readout PRIVATE DLMS_DECODE_READOUT_JSON)
+endif()
